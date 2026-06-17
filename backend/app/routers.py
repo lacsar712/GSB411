@@ -271,12 +271,39 @@ def save_preset(payload: PresetRequest, session=Depends(session_dep), user=Depen
         preset = ScreeningPreset(name=payload.name, payload_json=json.dumps(payload.payload, ensure_ascii=False))
         session.add(preset)
     session.commit()
-    return {"status": "ok"}
+    session.refresh(preset)
+    return {"id": preset.id, "name": preset.name, "payload": json.loads(preset.payload_json), "is_default": preset.is_default}
 
 @router.get("/screening/preset")
 def list_presets(session=Depends(session_dep)):
     presets = session.exec(select(ScreeningPreset)).all()
-    return [{"name": p.name, "payload": json.loads(p.payload_json)} for p in presets]
+    return [{"id": p.id, "name": p.name, "payload": json.loads(p.payload_json), "is_default": p.is_default} for p in presets]
+
+@router.get("/screening/preset/default")
+def get_default_preset(session=Depends(session_dep)):
+    preset = session.exec(select(ScreeningPreset).where(ScreeningPreset.is_default == True)).first()
+    if not preset:
+        return None
+    return {"id": preset.id, "name": preset.name, "payload": json.loads(preset.payload_json), "is_default": preset.is_default}
+
+@router.put("/screening/preset/{name}/default")
+def set_default_preset(name: str, session=Depends(session_dep), user=Depends(auth_dep)):
+    preset = session.exec(select(ScreeningPreset).where(ScreeningPreset.name == name)).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    for p in session.exec(select(ScreeningPreset).where(ScreeningPreset.is_default == True)).all():
+        p.is_default = False
+    preset.is_default = True
+    session.commit()
+    session.refresh(preset)
+    return {"id": preset.id, "name": preset.name, "payload": json.loads(preset.payload_json), "is_default": preset.is_default}
+
+@router.delete("/screening/preset/default")
+def unset_default_preset(session=Depends(session_dep), user=Depends(auth_dep)):
+    for p in session.exec(select(ScreeningPreset).where(ScreeningPreset.is_default == True)).all():
+        p.is_default = False
+    session.commit()
+    return {"status": "ok"}
 
 @router.delete("/screening/preset")
 def delete_preset(name: str, session=Depends(session_dep), user=Depends(auth_dep)):
