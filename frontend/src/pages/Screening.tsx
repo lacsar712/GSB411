@@ -1,37 +1,17 @@
 import ReactECharts from 'echarts-for-react'
-import { FileDown, LayoutGrid, List as ListIcon, HelpCircle, TrendingUp, Activity, BarChart3, BookOpen, Zap, Waves } from 'lucide-react'
+import { FileDown, LayoutGrid, List as ListIcon, HelpCircle, TrendingUp, Activity, BarChart3, BookOpen, Zap, Waves, Star } from 'lucide-react'
 
 import { ChangeEvent, useEffect, useState } from 'react'
 import { z } from 'zod'
 import Modal from '../components/Modal'
 import Loading from '../components/Loading'
-import { api } from '../lib/api'
 import { useToast } from '../components/Toast'
-import { AxiosResponse } from 'axios'
-
-interface ScreeningItem {
-    symbol: string
-    name: string
-    market: string
-    industry?: string
-    market_cap?: number
-    pe_ratio?: number
-    pb_ratio?: number
-    momentum?: number
-    rsi?: number
-}
-
-interface Preset {
-    id?: number
-    name: string
-    payload: { filters: any }
-}
+import { runScreening, loadPresets, savePreset, deletePreset, getDefaultPreset, setDefaultPreset, unsetDefaultPreset, exportResults, Preset, Filters, ScreeningItem } from '../lib/screeningApi'
 
 const presetSchema = z.object({
     name: z.string().min(1, "请输入名称"),
 })
 
-// 字段配置：包含标签、描述、提示、示例等信息
 const FIELD_CONFIGS = {
     basic: {
         title: '基本面指标',
@@ -47,7 +27,7 @@ const FIELD_CONFIGS = {
                 minPlaceholder: '如：100（表示100亿以上）',
                 maxPlaceholder: '如：1000（表示1000亿以下）',
                 examples: ['大盘股：>500亿', '中盘股：100-500亿', '小盘股：<100亿'],
-                multiplier: 100000000, // 用户输入亿，转换为元
+                multiplier: 100000000,
             },
             {
                 key: 'pe',
@@ -119,7 +99,7 @@ const FIELD_CONFIGS = {
                 minPlaceholder: '如：5（表示涨幅>5%）',
                 maxPlaceholder: '如：30（表示涨幅<30%）',
                 examples: ['弱势股：<0%', '平稳股：0-10%', '强势股：>10%'],
-                multiplier: 0.01, // 用户输入百分比，转换为小数
+                multiplier: 0.01,
             },
             {
                 key: 'volatility',
@@ -141,13 +121,12 @@ const FIELD_CONFIGS = {
                 minPlaceholder: '如：100（日成交>100万手）',
                 maxPlaceholder: '如：10000（排除超大资金股）',
                 examples: ['低流动：<50万手', '中等流动：50-500万手', '高流动：>500万手'],
-                multiplier: 10000, // 用户输入万手，转换为手
+                multiplier: 10000,
             },
         ]
     }
 }
 
-// 提示气泡组件
 function Tooltip({ text }: { text: string }) {
     const [show, setShow] = useState(false)
     return (
@@ -168,7 +147,6 @@ function Tooltip({ text }: { text: string }) {
     )
 }
 
-// 字段输入组件
 function FieldInput({
     config,
     minValue,
@@ -184,7 +162,6 @@ function FieldInput({
 }) {
     return (
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
-            {/* 标题行 */}
             <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center">
                     <span className="font-medium text-slate-800">{config.label}</span>
@@ -193,10 +170,8 @@ function FieldInput({
                 </div>
             </div>
 
-            {/* 描述 */}
             <p className="text-xs text-slate-500 mb-3">{config.description}</p>
 
-            {/* 输入区域 */}
             <div className="flex items-center gap-2">
                 <div className="flex-1">
                     <label className="text-xs text-slate-400 mb-1 block">最小值</label>
@@ -219,7 +194,6 @@ function FieldInput({
                 </div>
             </div>
 
-            {/* 示例参考 */}
             <div className="mt-3 flex flex-wrap gap-1.5">
                 {config.examples.map((ex, i) => (
                     <span key={i} className="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full">
@@ -239,44 +213,56 @@ export default function Screening() {
     const [presetOpen, setPresetOpen] = useState(false)
     const [deleteModalOpen, setDeleteModalOpen] = useState(false)
     const [presetToDelete, setPresetToDelete] = useState<Preset | null>(null)
-
     const [presetName, setPresetName] = useState('')
+    const [defaultPresetName, setDefaultPresetName] = useState<string | null>(null)
 
-    // View Mode
     const [viewMode, setViewMode] = useState<'table' | 'chart'>('table')
     const [activeTab, setActiveTab] = useState<'basic' | 'technical' | 'factor'>('basic')
 
-    const [filters, setFilters] = useState({
-        // Basic (用户输入的是亿元)
+    const [filters, setFilters] = useState<Filters>({
         market_cap_min: '',
         market_cap_max: '',
         pe_min: '',
         pe_max: '',
         pb_min: '',
         pb_max: '',
-        // Factor (用户输入的是百分比或万手)
         momentum_min: '',
         momentum_max: '',
         volatility_min: '',
         volatility_max: '',
         liquidity_min: '',
         liquidity_max: '',
-        // Technical
         rsi_min: '',
         rsi_max: '',
         macd_positive: false,
         kdj_positive: false,
     })
 
-    const loadPresets = () => {
-        api.get('/screening/preset')
-            .then((res: AxiosResponse<Preset[]>) => setPresets(res.data))
-            .catch(() => pushToast('筛选方案加载失败', 'error'))
+    const loadPresetsData = async () => {
+        try {
+            const data = await loadPresets()
+            setPresets(data)
+            const foundDefault = data.find(p => p.is_default)
+            setDefaultPresetName(foundDefault ? foundDefault.name : null)
+        } catch {
+            pushToast('筛选方案加载失败', 'error')
+        }
     }
 
     useEffect(() => {
-        loadPresets()
+        loadPresetsData()
     }, [])
+
+    useEffect(() => {
+        if (presets.length > 0 && !defaultPresetName && items.length === 0) {
+            getDefaultPreset().then((preset) => {
+                if (preset) {
+                    applyPresetInternal(preset)
+                    setDefaultPresetName(preset.name)
+                }
+            }).catch(() => {})
+        }
+    }, [presets])
 
     const onDeleteClick = (e: React.MouseEvent, preset: Preset) => {
         e.stopPropagation()
@@ -284,97 +270,45 @@ export default function Screening() {
         setDeleteModalOpen(true)
     }
 
-    const confirmDelete = () => {
+    const confirmDelete = async () => {
         if (!presetToDelete) return
-        api.delete(`/screening/preset?name=${encodeURIComponent(presetToDelete.name)}`)
-            .then(() => {
-                pushToast('方案已删除', 'success')
-                setDeleteModalOpen(false)
-                setPresetToDelete(null)
-                loadPresets()
-            })
-            .catch(() => pushToast('删除失败', 'error'))
+        try {
+            await deletePreset(presetToDelete.name)
+            pushToast('方案已删除', 'success')
+            setDeleteModalOpen(false)
+            setPresetToDelete(null)
+            if (defaultPresetName === presetToDelete.name) {
+                setDefaultPresetName(null)
+            }
+            await loadPresetsData()
+        } catch {
+            pushToast('删除失败', 'error')
+        }
     }
 
-    const runScreening = (filtersOverride?: typeof filters) => {
+    const runScreeningWithFilters = async (filtersOverride?: Filters) => {
         setLoading(true)
         pushToast('正在筛选股票，请稍候...', 'info')
-        const currentFilters = filtersOverride || filters
-        // 转换用户友好的输入为API需要的格式
-        api.post('/screening/run', {
-            basic_filters: {
-                market_cap_min: currentFilters.market_cap_min ? Number(currentFilters.market_cap_min) * 100000000 : undefined,
-                market_cap_max: currentFilters.market_cap_max ? Number(currentFilters.market_cap_max) * 100000000 : undefined,
-                pe_min: currentFilters.pe_min ? Number(currentFilters.pe_min) : undefined,
-                pe_max: currentFilters.pe_max ? Number(currentFilters.pe_max) : undefined,
-                pb_min: currentFilters.pb_min ? Number(currentFilters.pb_min) : undefined,
-                pb_max: currentFilters.pb_max ? Number(currentFilters.pb_max) : undefined,
-            },
-            factor_filters: {
-                momentum_min: currentFilters.momentum_min ? Number(currentFilters.momentum_min) / 100 : undefined,
-                momentum_max: currentFilters.momentum_max ? Number(currentFilters.momentum_max) / 100 : undefined,
-                volatility_min: currentFilters.volatility_min ? Number(currentFilters.volatility_min) / 100 : undefined,
-                volatility_max: currentFilters.volatility_max ? Number(currentFilters.volatility_max) / 100 : undefined,
-                liquidity_min: currentFilters.liquidity_min ? Number(currentFilters.liquidity_min) * 10000 : undefined,
-                liquidity_max: currentFilters.liquidity_max ? Number(currentFilters.liquidity_max) * 10000 : undefined,
-            },
-            technical_filters: {
-                rsi_min: currentFilters.rsi_min ? Number(currentFilters.rsi_min) : undefined,
-                rsi_max: currentFilters.rsi_max ? Number(currentFilters.rsi_max) : undefined,
-                macd_positive: currentFilters.macd_positive,
-                kdj_positive: currentFilters.kdj_positive,
-            }
-        })
-            .then((res: AxiosResponse<{ items: ScreeningItem[] }>) => {
-                setItems(res.data.items)
-                pushToast(`筛选完成，共 ${res.data.items.length} 只股票`, 'success')
-            })
-            .catch(() => pushToast('选股筛选失败', 'error'))
-            .finally(() => setLoading(false))
+        try {
+            const result = await runScreening(filtersOverride || filters)
+            setItems(result)
+            pushToast(`筛选完成，共 ${result.length} 只股票`, 'success')
+        } catch {
+            pushToast('选股筛选失败', 'error')
+        } finally {
+            setLoading(false)
+        }
     }
 
-    const exportResults = (type: 'csv' | 'xlsx') => {
-        api.post('/screening/export', {
-            file_type: type,
-            basic_filters: {
-                market_cap_min: filters.market_cap_min ? Number(filters.market_cap_min) * 100000000 : undefined,
-                market_cap_max: filters.market_cap_max ? Number(filters.market_cap_max) * 100000000 : undefined,
-                pe_min: filters.pe_min ? Number(filters.pe_min) : undefined,
-                pe_max: filters.pe_max ? Number(filters.pe_max) : undefined,
-                pb_min: filters.pb_min ? Number(filters.pb_min) : undefined,
-                pb_max: filters.pb_max ? Number(filters.pb_max) : undefined,
-            },
-            factor_filters: {
-                momentum_min: filters.momentum_min ? Number(filters.momentum_min) / 100 : undefined,
-                momentum_max: filters.momentum_max ? Number(filters.momentum_max) / 100 : undefined,
-                volatility_min: filters.volatility_min ? Number(filters.volatility_min) / 100 : undefined,
-                volatility_max: filters.volatility_max ? Number(filters.volatility_max) / 100 : undefined,
-                liquidity_min: filters.liquidity_min ? Number(filters.liquidity_min) * 10000 : undefined,
-                liquidity_max: filters.liquidity_max ? Number(filters.liquidity_max) * 10000 : undefined,
-            },
-            technical_filters: {
-                rsi_min: filters.rsi_min ? Number(filters.rsi_min) : undefined,
-                rsi_max: filters.rsi_max ? Number(filters.rsi_max) : undefined,
-                macd_positive: filters.macd_positive,
-                kdj_positive: filters.kdj_positive,
-            }
-        }, { responseType: 'blob' })
-            .then((res) => {
-                const url = window.URL.createObjectURL(new Blob([res.data]))
-                const link = document.createElement('a')
-                link.href = url
-                link.setAttribute('download', `screening_result.${type}`)
-                document.body.appendChild(link)
-                link.click()
-            })
-            .catch((err) => {
-                console.error(err)
-                pushToast('导出失败，请稍后重试', 'error')
-            })
-            .catch(() => pushToast('导出失败', 'error'))
+    const exportResultsHandler = async (type: 'csv' | 'xlsx') => {
+        try {
+            await exportResults(filters, type)
+        } catch {
+            pushToast('导出失败，请稍后重试', 'error')
+        }
     }
 
-    const savePreset = () => {
+    const savePresetHandler = async () => {
         const parsed = presetSchema.safeParse({ name: presetName })
         if (!parsed.success) {
             pushToast('请输入有效方案名称', 'error')
@@ -384,24 +318,24 @@ export default function Screening() {
             pushToast('最多只能保存6条方案，请先删除旧方案', 'error')
             return
         }
-        api.post('/screening/preset', { name: presetName, payload: { filters } })
-            .then(() => {
-                pushToast('筛选方案已保存', 'success')
-                setPresetOpen(false)
-                setPresetName('')
-                loadPresets()
-            })
-            .catch(() => pushToast('保存方案失败', 'error'))
+        try {
+            await savePreset(presetName, filters)
+            pushToast('筛选方案已保存', 'success')
+            setPresetOpen(false)
+            setPresetName('')
+            await loadPresetsData()
+        } catch {
+            pushToast('保存方案失败', 'error')
+        }
     }
 
-    const applyPreset = (preset: Preset) => {
+    const applyPresetInternal = (preset: Preset) => {
         const next = preset.payload
         if (next && next.filters) {
             setFilters(prev => ({ ...prev, ...next.filters }))
-            runScreening(next.filters)
+            runScreeningWithFilters(next.filters as Filters)
             pushToast(`已加载方案并筛选：${preset.name}`, 'success')
 
-            // Auto-switch tab based on active filters
             const f = next.filters
             const check = (keys: string[]) => keys.some(k => f[k] && f[k] !== '' && f[k] !== false)
 
@@ -415,7 +349,27 @@ export default function Screening() {
         }
     }
 
+    const applyPreset = (preset: Preset) => {
+        applyPresetInternal(preset)
+    }
 
+    const toggleDefaultPreset = async (e: React.MouseEvent, preset: Preset) => {
+        e.stopPropagation()
+        try {
+            if (preset.is_default || defaultPresetName === preset.name) {
+                await unsetDefaultPreset()
+                setDefaultPresetName(null)
+                pushToast('已取消默认方案', 'info')
+            } else {
+                await setDefaultPreset(preset.name)
+                setDefaultPresetName(preset.name)
+                pushToast(`已设置「${preset.name}」为默认方案`, 'success')
+            }
+            await loadPresetsData()
+        } catch {
+            pushToast('操作失败，请稍后重试', 'error')
+        }
+    }
 
     const chartOption = {
         tooltip: {
@@ -455,7 +409,7 @@ export default function Screening() {
                     <div className="h-8 w-px bg-slate-200 mx-2"></div>
                     <button
                         className={`rounded-xl border border-slate-200 px-4 py-2 text-sm transition flex items-center ${items.length === 0 || loading ? 'text-slate-300 cursor-not-allowed bg-slate-50' : 'text-slate-700 hover:bg-slate-50 cursor-pointer'}`}
-                        onClick={() => items.length > 0 && !loading && exportResults('csv')}
+                        onClick={() => items.length > 0 && !loading && exportResultsHandler('csv')}
                         disabled={items.length === 0 || loading}
                     >
                         <FileDown className="mr-2 inline h-4 w-4" />导出CSV
@@ -469,7 +423,7 @@ export default function Screening() {
                     </button>
                     <button
                         className="rounded-xl bg-primary px-5 py-2 text-sm text-white font-medium hover:bg-primary/90 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                        onClick={() => runScreening()}
+                        onClick={() => runScreeningWithFilters()}
                         disabled={loading}
                     >
                         {loading && (
@@ -483,7 +437,6 @@ export default function Screening() {
                 </div>
             </div>
 
-            {/* 分类标签 */}
             <div className="flex border-b border-slate-200">
                 {(['basic', 'technical', 'factor'] as const).map((tab) => {
                     const cfg = FIELD_CONFIGS[tab]
@@ -504,7 +457,6 @@ export default function Screening() {
                 })}
             </div>
 
-            {/* 分类说明 */}
             <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-primary/5 to-transparent rounded-xl">
                 <TabIcon size={20} className="text-primary" />
                 <div>
@@ -513,7 +465,6 @@ export default function Screening() {
                 </div>
             </div>
 
-            {/* 筛选条件 */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {activeTab === 'basic' && FIELD_CONFIGS.basic.fields.map((field) => (
                     <FieldInput
@@ -539,7 +490,6 @@ export default function Screening() {
 
                 {activeTab === 'technical' && (
                     <>
-                        {/* RSI 输入 */}
                         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow lg:col-span-2">
                             <div className="flex items-center mb-2">
                                 <span className="font-medium text-slate-800">RSI 相对强弱指数</span>
@@ -575,7 +525,6 @@ export default function Screening() {
                             </div>
                         </div>
 
-                        {/* MACD 金叉 */}
                         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
                             <label className="flex items-start gap-3 cursor-pointer">
                                 <input
@@ -598,7 +547,6 @@ export default function Screening() {
                             </label>
                         </div>
 
-                        {/* KDJ 金叉 */}
                         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
                             <label className="flex items-start gap-3 cursor-pointer">
                                 <input
@@ -624,7 +572,6 @@ export default function Screening() {
                 )}
             </div>
 
-            {/* 结果区域 */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="mb-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -633,13 +580,23 @@ export default function Screening() {
                     </div>
                     <div className="flex gap-2 flex-wrap">
                         {presets.slice(0, 8).map((preset: Preset) => (
-                            <div key={preset.name} className="group flex items-center rounded-lg border border-slate-200 bg-slate-50 hover:bg-white hover:shadow-sm transition cursor-pointer" onClick={() => applyPreset(preset)}>
+                            <div key={preset.name} className={`group flex items-center rounded-lg border bg-slate-50 hover:bg-white hover:shadow-sm transition cursor-pointer ${preset.is_default || defaultPresetName === preset.name ? 'border-amber-300 bg-amber-50/50' : 'border-slate-200'}`} onClick={() => applyPreset(preset)}>
+                                {(preset.is_default || defaultPresetName === preset.name) && (
+                                    <Star size={12} className="ml-1.5 text-amber-500 fill-amber-500 shrink-0" />
+                                )}
                                 <span className="px-3 py-1 text-xs text-slate-700">{preset.name}</span>
                                 <button
                                     className="pr-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                                     onClick={(e) => onDeleteClick(e, preset)}
                                 >
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+                                </button>
+                                <button
+                                    className={`pr-2 transition-opacity ${preset.is_default || defaultPresetName === preset.name ? 'opacity-100 text-amber-500 hover:text-amber-600' : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-amber-500'}`}
+                                    onClick={(e) => toggleDefaultPreset(e, preset)}
+                                    title={preset.is_default || defaultPresetName === preset.name ? "取消默认方案" : "设为默认方案"}
+                                >
+                                    <Star size={12} />
                                 </button>
                             </div>
                         ))}
@@ -708,7 +665,7 @@ export default function Screening() {
                 footer={(
                     <div className="flex justify-end gap-3">
                         <button className="rounded-lg border border-slate-200 px-4 py-2 text-sm hover:bg-slate-50 transition" onClick={() => setPresetOpen(false)}>取消</button>
-                        <button className="rounded-lg bg-primary px-4 py-2 text-sm text-white font-medium" onClick={savePreset}>保存</button>
+                        <button className="rounded-lg bg-primary px-4 py-2 text-sm text-white font-medium" onClick={savePresetHandler}>保存</button>
                     </div>
                 )}
             >
