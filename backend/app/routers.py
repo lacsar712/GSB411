@@ -268,7 +268,7 @@ def save_preset(payload: PresetRequest, session=Depends(session_dep), user=Depen
     if preset:
         preset.payload_json = json.dumps(payload.payload, ensure_ascii=False)
     else:
-        preset = ScreeningPreset(name=payload.name, payload_json=json.dumps(payload.payload, ensure_ascii=False))
+        preset = ScreeningPreset(name=payload.name, payload_json=json.dumps(payload.payload, ensure_ascii=False), is_default=False)
         session.add(preset)
     session.commit()
     return {"status": "ok"}
@@ -276,7 +276,26 @@ def save_preset(payload: PresetRequest, session=Depends(session_dep), user=Depen
 @router.get("/screening/preset")
 def list_presets(session=Depends(session_dep)):
     presets = session.exec(select(ScreeningPreset)).all()
-    return [{"name": p.name, "payload": json.loads(p.payload_json)} for p in presets]
+    return [{"name": p.name, "payload": json.loads(p.payload_json), "is_default": p.is_default} for p in presets]
+
+@router.put("/screening/preset/default")
+def set_default_preset(name: str, session=Depends(session_dep), user=Depends(auth_dep)):
+    preset = session.exec(select(ScreeningPreset).where(ScreeningPreset.name == name)).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    all_presets = session.exec(select(ScreeningPreset)).all()
+    for p in all_presets:
+        p.is_default = False
+    preset.is_default = True
+    session.commit()
+    return {"status": "ok"}
+
+@router.get("/screening/preset/default")
+def get_default_preset(session=Depends(session_dep)):
+    preset = session.exec(select(ScreeningPreset).where(ScreeningPreset.is_default == True)).first()
+    if not preset:
+        return None
+    return {"name": preset.name, "payload": json.loads(preset.payload_json), "is_default": True}
 
 @router.delete("/screening/preset")
 def delete_preset(name: str, session=Depends(session_dep), user=Depends(auth_dep)):
