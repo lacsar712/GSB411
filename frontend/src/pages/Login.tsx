@@ -32,6 +32,7 @@ export default function Login() {
             .then((res: AxiosResponse<{ token: string, role: string }>) => {
                 localStorage.setItem('momentum_token', res.data.token)
                 localStorage.setItem('momentum_role', res.data.role)
+                localStorage.setItem('momentum_username', form.username)
                 pushToast('登录成功', 'success')
                 window.dispatchEvent(new Event('momentum-auth'))
                 navigate('/', { replace: true })
