@@ -21,6 +21,7 @@ export default function Sidebar() {
     const handleLogout = () => {
         localStorage.removeItem('momentum_token')
         localStorage.removeItem('momentum_role')
+        localStorage.removeItem('momentum_username')
         window.dispatchEvent(new Event('momentum-auth'))
         navigate('/login')
     }

@@ -275,8 +275,8 @@ def save_preset(payload: PresetRequest, session=Depends(session_dep), user=Depen
 
 @router.get("/screening/preset")
 def list_presets(session=Depends(session_dep)):
-    presets = session.exec(select(ScreeningPreset)).all()
-    return [{"name": p.name, "payload": json.loads(p.payload_json)} for p in presets]
+    presets = session.exec(select(ScreeningPreset).order_by(ScreeningPreset.created_at)).all()
+    return [{"id": p.id, "name": p.name, "payload": json.loads(p.payload_json), "is_default": p.is_default} for p in presets]
 
 @router.delete("/screening/preset")
 def delete_preset(name: str, session=Depends(session_dep), user=Depends(auth_dep)):
@@ -286,6 +286,34 @@ def delete_preset(name: str, session=Depends(session_dep), user=Depends(auth_dep
     session.delete(preset)
     session.commit()
     return {"status": "ok"}
+
+@router.post("/screening/preset/default")
+def set_default_preset(payload: PresetRequest, session=Depends(session_dep), user=Depends(auth_dep)):
+    preset = session.exec(select(ScreeningPreset).where(ScreeningPreset.name == payload.name)).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    existing_defaults = session.exec(select(ScreeningPreset).where(ScreeningPreset.is_default == True)).all()
+    for p in existing_defaults:
+        p.is_default = False
+    preset.is_default = True
+    session.commit()
+    return {"status": "ok", "name": preset.name}
+
+@router.delete("/screening/preset/default")
+def unset_default_preset(name: str, session=Depends(session_dep), user=Depends(auth_dep)):
+    preset = session.exec(select(ScreeningPreset).where(ScreeningPreset.name == name)).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    preset.is_default = False
+    session.commit()
+    return {"status": "ok"}
+
+@router.get("/screening/preset/default")
+def get_default_preset(session=Depends(session_dep)):
+    preset = session.exec(select(ScreeningPreset).where(ScreeningPreset.is_default == True).limit(1)).first()
+    if not preset:
+        return None
+    return {"id": preset.id, "name": preset.name, "payload": json.loads(preset.payload_json), "is_default": True}
 
 @router.post("/patterns/scan")
 def scan_patterns(payload: PatternScanRequest, session=Depends(session_dep), user=Depends(auth_dep)):
