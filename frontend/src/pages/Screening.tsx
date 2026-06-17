@@ -1,31 +1,12 @@
 import ReactECharts from 'echarts-for-react'
-import { FileDown, LayoutGrid, List as ListIcon, HelpCircle, TrendingUp, Activity, BarChart3, BookOpen, Zap, Waves } from 'lucide-react'
+import { FileDown, LayoutGrid, List as ListIcon, HelpCircle, TrendingUp, Activity, BarChart3, BookOpen, Zap, Waves, Star } from 'lucide-react'
 
 import { ChangeEvent, useEffect, useState } from 'react'
 import { z } from 'zod'
 import Modal from '../components/Modal'
 import Loading from '../components/Loading'
-import { api } from '../lib/api'
 import { useToast } from '../components/Toast'
-import { AxiosResponse } from 'axios'
-
-interface ScreeningItem {
-    symbol: string
-    name: string
-    market: string
-    industry?: string
-    market_cap?: number
-    pe_ratio?: number
-    pb_ratio?: number
-    momentum?: number
-    rsi?: number
-}
-
-interface Preset {
-    id?: number
-    name: string
-    payload: { filters: any }
-}
+import { screeningApi, Preset, ScreeningItem, ScreeningFilters } from '../services/screening'
 
 const presetSchema = z.object({
     name: z.string().min(1, "请输入名称"),
@@ -246,22 +227,19 @@ export default function Screening() {
     const [viewMode, setViewMode] = useState<'table' | 'chart'>('table')
     const [activeTab, setActiveTab] = useState<'basic' | 'technical' | 'factor'>('basic')
 
-    const [filters, setFilters] = useState({
-        // Basic (用户输入的是亿元)
+    const [filters, setFilters] = useState<ScreeningFilters>({
         market_cap_min: '',
         market_cap_max: '',
         pe_min: '',
         pe_max: '',
         pb_min: '',
         pb_max: '',
-        // Factor (用户输入的是百分比或万手)
         momentum_min: '',
         momentum_max: '',
         volatility_min: '',
         volatility_max: '',
         liquidity_min: '',
         liquidity_max: '',
-        // Technical
         rsi_min: '',
         rsi_max: '',
         macd_positive: false,
@@ -269,13 +247,25 @@ export default function Screening() {
     })
 
     const loadPresets = () => {
-        api.get('/screening/preset')
-            .then((res: AxiosResponse<Preset[]>) => setPresets(res.data))
+        screeningApi.listPresets()
+            .then((res) => setPresets(res.data))
             .catch(() => pushToast('筛选方案加载失败', 'error'))
+    }
+
+    const loadDefaultPreset = () => {
+        screeningApi.getDefaultPreset()
+            .then((res) => {
+                const defaultPreset = res.data
+                if (defaultPreset && defaultPreset.payload && defaultPreset.payload.filters) {
+                    applyPreset(defaultPreset, false)
+                }
+            })
+            .catch(() => {})
     }
 
     useEffect(() => {
         loadPresets()
+        loadDefaultPreset()
     }, [])
 
     const onDeleteClick = (e: React.MouseEvent, preset: Preset) => {
@@ -286,7 +276,7 @@ export default function Screening() {
 
     const confirmDelete = () => {
         if (!presetToDelete) return
-        api.delete(`/screening/preset?name=${encodeURIComponent(presetToDelete.name)}`)
+        screeningApi.deletePreset(presetToDelete.name)
             .then(() => {
                 pushToast('方案已删除', 'success')
                 setDeleteModalOpen(false)
@@ -296,36 +286,12 @@ export default function Screening() {
             .catch(() => pushToast('删除失败', 'error'))
     }
 
-    const runScreening = (filtersOverride?: typeof filters) => {
+    const runScreening = (filtersOverride?: ScreeningFilters) => {
         setLoading(true)
         pushToast('正在筛选股票，请稍候...', 'info')
         const currentFilters = filtersOverride || filters
-        // 转换用户友好的输入为API需要的格式
-        api.post('/screening/run', {
-            basic_filters: {
-                market_cap_min: currentFilters.market_cap_min ? Number(currentFilters.market_cap_min) * 100000000 : undefined,
-                market_cap_max: currentFilters.market_cap_max ? Number(currentFilters.market_cap_max) * 100000000 : undefined,
-                pe_min: currentFilters.pe_min ? Number(currentFilters.pe_min) : undefined,
-                pe_max: currentFilters.pe_max ? Number(currentFilters.pe_max) : undefined,
-                pb_min: currentFilters.pb_min ? Number(currentFilters.pb_min) : undefined,
-                pb_max: currentFilters.pb_max ? Number(currentFilters.pb_max) : undefined,
-            },
-            factor_filters: {
-                momentum_min: currentFilters.momentum_min ? Number(currentFilters.momentum_min) / 100 : undefined,
-                momentum_max: currentFilters.momentum_max ? Number(currentFilters.momentum_max) / 100 : undefined,
-                volatility_min: currentFilters.volatility_min ? Number(currentFilters.volatility_min) / 100 : undefined,
-                volatility_max: currentFilters.volatility_max ? Number(currentFilters.volatility_max) / 100 : undefined,
-                liquidity_min: currentFilters.liquidity_min ? Number(currentFilters.liquidity_min) * 10000 : undefined,
-                liquidity_max: currentFilters.liquidity_max ? Number(currentFilters.liquidity_max) * 10000 : undefined,
-            },
-            technical_filters: {
-                rsi_min: currentFilters.rsi_min ? Number(currentFilters.rsi_min) : undefined,
-                rsi_max: currentFilters.rsi_max ? Number(currentFilters.rsi_max) : undefined,
-                macd_positive: currentFilters.macd_positive,
-                kdj_positive: currentFilters.kdj_positive,
-            }
-        })
-            .then((res: AxiosResponse<{ items: ScreeningItem[] }>) => {
+        screeningApi.runScreening(currentFilters)
+            .then((res) => {
                 setItems(res.data.items)
                 pushToast(`筛选完成，共 ${res.data.items.length} 只股票`, 'success')
             })
@@ -334,31 +300,7 @@ export default function Screening() {
     }
 
     const exportResults = (type: 'csv' | 'xlsx') => {
-        api.post('/screening/export', {
-            file_type: type,
-            basic_filters: {
-                market_cap_min: filters.market_cap_min ? Number(filters.market_cap_min) * 100000000 : undefined,
-                market_cap_max: filters.market_cap_max ? Number(filters.market_cap_max) * 100000000 : undefined,
-                pe_min: filters.pe_min ? Number(filters.pe_min) : undefined,
-                pe_max: filters.pe_max ? Number(filters.pe_max) : undefined,
-                pb_min: filters.pb_min ? Number(filters.pb_min) : undefined,
-                pb_max: filters.pb_max ? Number(filters.pb_max) : undefined,
-            },
-            factor_filters: {
-                momentum_min: filters.momentum_min ? Number(filters.momentum_min) / 100 : undefined,
-                momentum_max: filters.momentum_max ? Number(filters.momentum_max) / 100 : undefined,
-                volatility_min: filters.volatility_min ? Number(filters.volatility_min) / 100 : undefined,
-                volatility_max: filters.volatility_max ? Number(filters.volatility_max) / 100 : undefined,
-                liquidity_min: filters.liquidity_min ? Number(filters.liquidity_min) * 10000 : undefined,
-                liquidity_max: filters.liquidity_max ? Number(filters.liquidity_max) * 10000 : undefined,
-            },
-            technical_filters: {
-                rsi_min: filters.rsi_min ? Number(filters.rsi_min) : undefined,
-                rsi_max: filters.rsi_max ? Number(filters.rsi_max) : undefined,
-                macd_positive: filters.macd_positive,
-                kdj_positive: filters.kdj_positive,
-            }
-        }, { responseType: 'blob' })
+        screeningApi.exportResults(filters, type)
             .then((res) => {
                 const url = window.URL.createObjectURL(new Blob([res.data]))
                 const link = document.createElement('a')
@@ -371,7 +313,6 @@ export default function Screening() {
                 console.error(err)
                 pushToast('导出失败，请稍后重试', 'error')
             })
-            .catch(() => pushToast('导出失败', 'error'))
     }
 
     const savePreset = () => {
@@ -384,7 +325,7 @@ export default function Screening() {
             pushToast('最多只能保存6条方案，请先删除旧方案', 'error')
             return
         }
-        api.post('/screening/preset', { name: presetName, payload: { filters } })
+        screeningApi.savePreset(presetName, filters)
             .then(() => {
                 pushToast('筛选方案已保存', 'success')
                 setPresetOpen(false)
@@ -394,15 +335,35 @@ export default function Screening() {
             .catch(() => pushToast('保存方案失败', 'error'))
     }
 
-    const applyPreset = (preset: Preset) => {
+    const toggleDefaultPreset = (e: React.MouseEvent, preset: Preset) => {
+        e.stopPropagation()
+        if (preset.is_default) {
+            screeningApi.unsetDefaultPreset()
+                .then(() => {
+                    pushToast('已取消默认方案', 'success')
+                    loadPresets()
+                })
+                .catch(() => pushToast('取消默认失败', 'error'))
+        } else {
+            screeningApi.setDefaultPreset(preset.name)
+                .then(() => {
+                    pushToast(`已设为默认方案：${preset.name}`, 'success')
+                    loadPresets()
+                })
+                .catch(() => pushToast('设置默认失败', 'error'))
+        }
+    }
+
+    const applyPreset = (preset: Preset, showToast = true) => {
         const next = preset.payload
         if (next && next.filters) {
             setFilters(prev => ({ ...prev, ...next.filters }))
             runScreening(next.filters)
-            pushToast(`已加载方案并筛选：${preset.name}`, 'success')
+            if (showToast) {
+                pushToast(`已加载方案并筛选：${preset.name}`, 'success')
+            }
 
-            // Auto-switch tab based on active filters
-            const f = next.filters
+            const f = next.filters as any
             const check = (keys: string[]) => keys.some(k => f[k] && f[k] !== '' && f[k] !== false)
 
             if (check(['market_cap_min', 'market_cap_max', 'pe_min', 'pe_max', 'pb_min', 'pb_max'])) {
@@ -633,8 +594,15 @@ export default function Screening() {
                     </div>
                     <div className="flex gap-2 flex-wrap">
                         {presets.slice(0, 8).map((preset: Preset) => (
-                            <div key={preset.name} className="group flex items-center rounded-lg border border-slate-200 bg-slate-50 hover:bg-white hover:shadow-sm transition cursor-pointer" onClick={() => applyPreset(preset)}>
-                                <span className="px-3 py-1 text-xs text-slate-700">{preset.name}</span>
+                            <div key={preset.name} className={`group flex items-center rounded-lg border transition cursor-pointer ${preset.is_default ? 'border-primary bg-primary/5' : 'border-slate-200 bg-slate-50 hover:bg-white hover:shadow-sm'}`} onClick={() => applyPreset(preset)}>
+                                <button
+                                    className={`pl-2 pr-1 transition-colors ${preset.is_default ? 'text-primary' : 'text-slate-300 hover:text-primary/70'}`}
+                                    onClick={(e) => toggleDefaultPreset(e, preset)}
+                                    title={preset.is_default ? '取消默认方案' : '设为默认方案'}
+                                >
+                                    <Star size={12} fill={preset.is_default ? 'currentColor' : 'none'} />
+                                </button>
+                                <span className={`px-1 py-1 text-xs ${preset.is_default ? 'text-primary font-medium' : 'text-slate-700'}`}>{preset.name}</span>
                                 <button
                                     className="pr-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                                     onClick={(e) => onDeleteClick(e, preset)}
